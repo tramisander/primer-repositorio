@@ -1,0 +1,293 @@
+from pathlib import Path
+import subprocess, time, zipfile, os, textwrap
+
+src = Path("/mnt/data/TRAMISANDER_Formulario_Maestro_Interconectado.xlsx")
+out = Path("/mnt/data/TRAMISANDER_Formulario_Maestro_Interconectado_MACROS.xlsm")
+
+vba = r'''Option VBASupport 1
+Option Explicit
+
+Private Function UltimaFila(ws As Worksheet) As Long
+    UltimaFila = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    If UltimaFila < 2 Then UltimaFila = 1
+End Function
+
+Private Function Txt(v As Variant) As String
+    If IsError(v) Or IsEmpty(v) Then Txt = "" Else Txt = Trim(CStr(v))
+End Function
+
+Private Function SaldoCliente(wsF As Worksheet) As Double
+    SaldoCliente = Application.Max(0, Val(wsF.Range("B10").Value) + Val(wsF.Range("B28").Value) - Val(wsF.Range("B11").Value))
+End Function
+
+Private Function SaldoGestor(wsF As Worksheet) As Double
+    If Val(wsF.Range("B14").Value) <= 0 Then
+        SaldoGestor = 0
+    ElseIf IsDate(wsF.Range("B15").Value) Then
+        SaldoGestor = 0
+    Else
+        SaldoGestor = Val(wsF.Range("B14").Value)
+    End If
+End Function
+
+Private Function SiguienteFactura(ws As Worksheet, anio As Long) As String
+    Dim r As Long, ult As Long, n As Long, f As String, pref As String
+    pref = "TRM-" & anio & "-"
+    ult = UltimaFila(ws)
+    For r = 2 To ult
+        f = Txt(ws.Cells(r,30).Value)
+        If Left$(f,Len(pref)) = pref Then
+            If Val(Right$(f,5)) > n Then n = Val(Right$(f,5))
+        End If
+    Next r
+    SiguienteFactura = pref & Format(n + 1,"00000")
+End Function
+
+Private Function PuedeFacturar(wsF As Worksheet) As Boolean
+    PuedeFacturar = (LCase$(Txt(wsF.Range("B16").Value))="terminado" And SaldoCliente(wsF)<=0.01 And SaldoGestor(wsF)<=0.01)
+End Function
+
+Public Sub GuardarRegistro()
+    Dim wsF As Worksheet, wsB As Worksheet
+    Dim fila As Long, r As Long, id As String, existe As Boolean
+    Dim anio As Long, factura As String
+
+    Set wsF = ThisWorkbook.Worksheets("FORMULARIO")
+    Set wsB = ThisWorkbook.Worksheets("BASE_DATOS")
+
+    If Txt(wsF.Range("B4").Value)="" Then MsgBox "Debe ingresar la PLACA.",vbExclamation,"TRAMISANDER": Exit Sub
+    If Txt(wsF.Range("B18").Value)="" Then MsgBox "Debe ingresar el NUMERO DE IDENTIFICACION.",vbExclamation,"TRAMISANDER": Exit Sub
+
+    id = Txt(wsF.Range("Z2").Value)
+    If id<>"" Then
+        For r=2 To UltimaFila(wsB)
+            If Txt(wsB.Cells(r,1).Value)=id Then fila=r: existe=True: Exit For
+        Next r
+    End If
+
+    If Not existe Then
+        fila=UltimaFila(wsB)+1
+        If fila<2 Then fila=2
+        id="REG-" & Format(fila-1,"00000")
+        wsB.Cells(fila,1).Value=id
+    End If
+
+    wsB.Cells(fila,2).Value=wsF.Range("B3").Value
+    wsB.Cells(fila,3).Value=UCase$(Txt(wsF.Range("B4").Value))
+    wsB.Cells(fila,4).Value=wsF.Range("B5").Value
+    wsB.Cells(fila,5).Value=wsF.Range("B6").Value
+    wsB.Cells(fila,6).Value=wsF.Range("B7").Value
+    wsB.Cells(fila,7).Value=wsF.Range("B8").Value
+    wsB.Cells(fila,8).Value=wsF.Range("B9").Value
+    wsB.Cells(fila,9).Value=Val(wsF.Range("B10").Value)
+    wsB.Cells(fila,10).Value=Val(wsF.Range("B11").Value)
+    wsB.Cells(fila,11).Value=wsF.Range("B12").Value
+    wsB.Cells(fila,12).Value=wsF.Range("B13").Value
+    wsB.Cells(fila,13).Value=Val(wsF.Range("B14").Value)
+    wsB.Cells(fila,14).Value=wsF.Range("B15").Value
+    wsB.Cells(fila,15).Value=wsF.Range("B16").Value
+    wsB.Cells(fila,16).Value=wsF.Range("B17").Value
+    wsB.Cells(fila,17).Value=wsF.Range("B18").Value
+    wsB.Cells(fila,18).Value=wsF.Range("B19").Value
+    wsB.Cells(fila,19).Value=wsF.Range("B20").Value
+    wsB.Cells(fila,20).Value=wsF.Range("B21").Value
+    wsB.Cells(fila,21).Value=wsF.Range("B22").Value
+    wsB.Cells(fila,22).Value=wsF.Range("B23").Value
+    wsB.Cells(fila,23).Value=wsF.Range("B24").Value
+    wsB.Cells(fila,24).Value=wsF.Range("B25").Value
+    wsB.Cells(fila,25).Value=wsF.Range("B26").Value
+    wsB.Cells(fila,26).Value=wsF.Range("B27").Value
+    wsB.Cells(fila,27).Value=Val(wsF.Range("B28").Value)
+    wsB.Cells(fila,28).Value=SaldoCliente(wsF)
+    wsB.Cells(fila,29).Value=SaldoGestor(wsF)
+
+    anio=Year(IIf(IsDate(wsF.Range("B3").Value),wsF.Range("B3").Value,Date))
+    If PuedeFacturar(wsF) Then
+        If Txt(wsB.Cells(fila,30).Value)="" Or Txt(wsB.Cells(fila,30).Value)="PENDIENTE" Then
+            factura=SiguienteFactura(wsB,anio)
+            wsB.Cells(fila,30).Value=factura
+            wsB.Cells(fila,31).Value=Date
+        End If
+    ElseIf Txt(wsB.Cells(fila,30).Value)="" Then
+        wsB.Cells(fila,30).Value="PENDIENTE"
+    End If
+
+    wsF.Range("Z2").Value=id
+    wsF.Range("D4").Value=wsB.Cells(fila,30).Value
+    wsF.Range("D7").Value=SaldoCliente(wsF)
+    wsF.Range("D10").Value=SaldoGestor(wsF)
+
+    If existe Then
+        MsgBox "Registro ACTUALIZADO." & vbCrLf & "ID: "&id & vbCrLf & "Factura: "&wsB.Cells(fila,30).Value,vbInformation,"TRAMISANDER"
+    Else
+        MsgBox "Registro GUARDADO." & vbCrLf & "ID: "&id & vbCrLf & "Factura: "&wsB.Cells(fila,30).Value,vbInformation,"TRAMISANDER"
+    End If
+End Sub
+
+Public Sub BuscarRegistro()
+    Dim wsB As Worksheet, wsS As Worksheet
+    Dim criterio As String, ult As Long, r As Long, salida As Long, encontrados As Long
+    Set wsB=ThisWorkbook.Worksheets("BASE_DATOS")
+    Set wsS=ThisWorkbook.Worksheets("BUSQUEDA")
+    criterio=Txt(wsS.Range("B3").Value)
+    If criterio="" Then MsgBox "Digite PLACA o CÉDULA.",vbExclamation,"TRAMISANDER": Exit Sub
+
+    wsS.Range("A6:AE2000").ClearContents
+    salida=6: ult=UltimaFila(wsB)
+    For r=2 To ult
+        If UCase$(Txt(wsB.Cells(r,3).Value))=UCase$(criterio) Or Txt(wsB.Cells(r,17).Value)=criterio Or UCase$(Txt(wsB.Cells(r,1).Value))=UCase$(criterio) Then
+            wsB.Range(wsB.Cells(r,1),wsB.Cells(r,31)).Copy Destination:=wsS.Cells(salida,1)
+            salida=salida+1: encontrados=encontrados+1
+        End If
+    Next r
+
+    If encontrados=0 Then
+        MsgBox "No se encontraron registros.",vbInformation,"TRAMISANDER"
+    ElseIf encontrados=1 Then
+        CargarPorID Txt(wsS.Cells(6,1).Value)
+    Else
+        MsgBox "Se encontraron "&encontrados&" registros. Copie el ID_REGISTRO de la columna A en BUSQUEDA!B4 y pulse CARGAR SELECCION.",vbInformation,"TRAMISANDER"
+    End If
+End Sub
+
+Public Sub CargarRegistroSeleccionado()
+    If Txt(ThisWorkbook.Worksheets("BUSQUEDA").Range("B4").Value)="" Then
+        MsgBox "Digite el ID_REGISTRO en BUSQUEDA!B4.",vbExclamation,"TRAMISANDER": Exit Sub
+    End If
+    CargarPorID Txt(ThisWorkbook.Worksheets("BUSQUEDA").Range("B4").Value)
+End Sub
+
+Private Sub CargarPorID(ByVal idBuscado As String)
+    Dim wsB As Worksheet, wsF As Worksheet, r As Long
+    Set wsB=ThisWorkbook.Worksheets("BASE_DATOS")
+    Set wsF=ThisWorkbook.Worksheets("FORMULARIO")
+    For r=2 To UltimaFila(wsB)
+        If UCase$(Txt(wsB.Cells(r,1).Value))=UCase$(idBuscado) Then
+            wsF.Range("B3").Value=wsB.Cells(r,2).Value
+            wsF.Range("B4").Value=wsB.Cells(r,3).Value
+            wsF.Range("B5").Value=wsB.Cells(r,4).Value
+            wsF.Range("B6").Value=wsB.Cells(r,5).Value
+            wsF.Range("B7").Value=wsB.Cells(r,6).Value
+            wsF.Range("B8").Value=wsB.Cells(r,7).Value
+            wsF.Range("B9").Value=wsB.Cells(r,8).Value
+            wsF.Range("B10").Value=wsB.Cells(r,9).Value
+            wsF.Range("B11").Value=wsB.Cells(r,10).Value
+            wsF.Range("B12").Value=wsB.Cells(r,11).Value
+            wsF.Range("B13").Value=wsB.Cells(r,12).Value
+            wsF.Range("B14").Value=wsB.Cells(r,13).Value
+            wsF.Range("B15").Value=wsB.Cells(r,14).Value
+            wsF.Range("B16").Value=wsB.Cells(r,15).Value
+            wsF.Range("B17").Value=wsB.Cells(r,16).Value
+            wsF.Range("B18").Value=wsB.Cells(r,17).Value
+            wsF.Range("B19").Value=wsB.Cells(r,18).Value
+            wsF.Range("B20").Value=wsB.Cells(r,19).Value
+            wsF.Range("B21").Value=wsB.Cells(r,20).Value
+            wsF.Range("B22").Value=wsB.Cells(r,21).Value
+            wsF.Range("B23").Value=wsB.Cells(r,22).Value
+            wsF.Range("B24").Value=wsB.Cells(r,23).Value
+            wsF.Range("B25").Value=wsB.Cells(r,24).Value
+            wsF.Range("B26").Value=wsB.Cells(r,25).Value
+            wsF.Range("B27").Value=wsB.Cells(r,26).Value
+            wsF.Range("B28").Value=wsB.Cells(r,27).Value
+            wsF.Range("D4").Value=wsB.Cells(r,30).Value
+            wsF.Range("D7").Value=wsB.Cells(r,28).Value
+            wsF.Range("D10").Value=wsB.Cells(r,29).Value
+            wsF.Range("Z2").Value=wsB.Cells(r,1).Value
+            ThisWorkbook.Worksheets("FORMULARIO").Activate
+            MsgBox "Registro cargado. Complete los datos faltantes y pulse GUARDAR REGISTRO.",vbInformation,"TRAMISANDER"
+            Exit Sub
+        End If
+    Next r
+    MsgBox "No existe el ID_REGISTRO.",vbExclamation,"TRAMISANDER"
+End Sub
+
+Public Sub LimpiarFormulario()
+    With ThisWorkbook.Worksheets("FORMULARIO")
+        .Range("B3:B28").ClearContents
+        .Range("Z2").ClearContents
+        .Range("D4").Value="PENDIENTE"
+        .Range("D7").Value=0
+        .Range("D10").Value=0
+        .Range("B3").Value=Date
+    End With
+End Sub
+
+Public Sub AbrirBusqueda()
+    ThisWorkbook.Worksheets("BUSQUEDA").Activate
+    ThisWorkbook.Worksheets("BUSQUEDA").Range("B3").Select
+End Sub
+
+Public Sub Auto_Open()
+    On Error Resume Next
+    Dim ws As Worksheet, shp As Shape
+    Set ws=ThisWorkbook.Worksheets("FORMULARIO")
+    ws.Shapes("btnGuardar").Delete
+    ws.Shapes("btnBuscar").Delete
+    ws.Shapes("btnLimpiar").Delete
+    ws.Shapes("btnCargar").Delete
+
+    Set shp=ws.Shapes.AddFormControl(xlButtonControl,330,65,150,28)
+    shp.Name="btnGuardar": shp.TextFrame.Characters.Text="GUARDAR REGISTRO": shp.OnAction="GuardarRegistro"
+    Set shp=ws.Shapes.AddFormControl(xlButtonControl,330,100,150,28)
+    shp.Name="btnBuscar": shp.TextFrame.Characters.Text="BUSCAR": shp.OnAction="AbrirBusqueda"
+    Set shp=ws.Shapes.AddFormControl(xlButtonControl,330,135,150,28)
+    shp.Name="btnLimpiar": shp.TextFrame.Characters.Text="LIMPIAR": shp.OnAction="LimpiarFormulario"
+    Set shp=ws.Shapes.AddFormControl(xlButtonControl,330,170,150,28)
+    shp.Name="btnCargar": shp.TextFrame.Characters.Text="CARGAR SELECCION": shp.OnAction="CargarRegistroSeleccionado"
+End Sub
+'''
+
+uno_script = r'''
+import uno, zipfile
+from com.sun.star.beans import PropertyValue
+src = "/mnt/data/TRAMISANDER_Formulario_Maestro_Interconectado.xlsx"
+out = "/mnt/data/TRAMISANDER_Formulario_Maestro_Interconectado_MACROS.xlsm"
+vba = ''' + repr(vba) + r'''
+ctx0=uno.getComponentContext()
+resolver=ctx0.ServiceManager.createInstanceWithContext("com.sun.star.bridge.UnoUrlResolver",ctx0)
+ctx=resolver.resolve("uno:socket,host=localhost,port=2021;urp;StarOffice.ComponentContext")
+sm=ctx.ServiceManager
+desk=sm.createInstanceWithContext("com.sun.star.frame.Desktop",ctx)
+doc=desk.loadComponentFromURL(uno.systemPathToFileUrl(src),"_blank",0,())
+libs=doc.BasicLibraries
+if "Standard" not in libs.getElementNames():
+    libs.createLibrary("Standard")
+libs.VBACompatibilityMode=True
+std=libs.getByName("Standard")
+if "TRAMISANDER" in std.getElementNames():
+    std.removeByName("TRAMISANDER")
+std.insertByName("TRAMISANDER",vba)
+p1=PropertyValue(); p1.Name="FilterName"; p1.Value="Calc MS Excel 2007 VBA XML"
+p2=PropertyValue(); p2.Name="Overwrite"; p2.Value=True
+doc.storeAsURL(uno.systemPathToFileUrl(out),(p1,p2))
+doc.close(True)
+with zipfile.ZipFile(out) as z:
+    assert "xl/vbaProject.bin" in z.namelist()
+print(out)
+'''
+script = Path("/mnt/data/_build_tramisander_xlsm.py")
+script.write_text(uno_script, encoding="utf-8")
+
+proc = subprocess.Popen(
+    ["soffice","--headless","--accept=socket,host=localhost,port=2021;urp;StarOffice.ComponentContext",
+     "--norestore","--nofirststartwizard"],
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+)
+try:
+    time.sleep(2)
+    run = subprocess.run(["/usr/bin/python3", str(script)], capture_output=True, text=True, timeout=60)
+    if run.returncode != 0:
+        raise RuntimeError(run.stderr or run.stdout or "No se pudo crear el XLSM.")
+finally:
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+with zipfile.ZipFile(out) as z:
+    assert "xl/vbaProject.bin" in z.namelist()
+    assert b"macroEnabled" in z.read("[Content_Types].xml")
+
+print(f"Archivo XLSM creado correctamente: {out}")
+print(f"Tamaño: {out.stat().st_size/1024:.1f} KB")
